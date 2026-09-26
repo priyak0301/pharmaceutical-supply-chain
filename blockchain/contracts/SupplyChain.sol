@@ -69,6 +69,28 @@ contract SupplyChain {
     }
 
     // =========================================================
+    // TEMPERATURE MONITORING
+    // =========================================================
+
+    struct TemperatureRange {
+
+        int256 minimum;
+
+        int256 maximum;
+
+        bool configured;
+    }
+
+    struct TemperatureReading {
+
+        int256 temperature;
+
+        uint256 timestamp;
+
+        bool withinRange;
+    }
+
+    // =========================================================
     // STORAGE
     // =========================================================
 
@@ -79,6 +101,16 @@ contract SupplyChain {
     mapping(
         uint256 => OwnershipRecord[]
     ) private ownershipHistory;
+
+    // Temperature range configured for each batch
+    mapping(
+        uint256 => TemperatureRange
+    ) private temperatureRanges;
+
+    // Temperature readings recorded for each batch
+    mapping(
+        uint256 => TemperatureReading[]
+    ) private temperatureHistory;
 
     // =========================================================
     // EVENTS
@@ -104,6 +136,19 @@ contract SupplyChain {
     event BatchStatusUpdated(
         uint256 indexed batchId,
         BatchStatus status
+    );
+
+    event TemperatureRangeSet(
+        uint256 indexed batchId,
+        int256 minimum,
+        int256 maximum
+    );
+
+    event TemperatureRecorded(
+        uint256 indexed batchId,
+        int256 temperature,
+        uint256 timestamp,
+        bool withinRange
     );
 
     // =========================================================
@@ -263,6 +308,149 @@ contract SupplyChain {
     }
 
     // =========================================================
+    // TEMPERATURE RANGE
+    // =========================================================
+
+    function setTemperatureRange(
+        uint256 batchId,
+        int256 minimum,
+        int256 maximum
+    )
+        external
+        onlyManufacturer
+    {
+
+        require(
+            batches[batchId].exists,
+            "Batch does not exist"
+        );
+
+        require(
+            batches[batchId].manufacturer == msg.sender,
+            "Only batch manufacturer can set temperature range"
+        );
+
+        require(
+            minimum <= maximum,
+            "Invalid temperature range"
+        );
+
+        temperatureRanges[batchId] = TemperatureRange({
+
+            minimum: minimum,
+
+            maximum: maximum,
+
+            configured: true
+        });
+
+        emit TemperatureRangeSet(
+            batchId,
+            minimum,
+            maximum
+        );
+    }
+
+    // =========================================================
+    // RECORD TEMPERATURE
+    // =========================================================
+
+    function recordTemperature(
+        uint256 batchId,
+        int256 temperature
+    )
+        external
+        onlyCurrentOwner(batchId)
+    {
+
+        require(
+            roles[msg.sender] == Role.TRANSPORTER,
+            "Only transporter can record temperature"
+        );
+
+        require(
+            batches[batchId].status == BatchStatus.IN_TRANSIT,
+            "Batch must be IN_TRANSIT"
+        );
+
+        require(
+            temperatureRanges[batchId].configured,
+            "Temperature range not configured"
+        );
+
+        TemperatureRange memory range =
+            temperatureRanges[batchId];
+
+        bool withinRange =
+            temperature >= range.minimum &&
+            temperature <= range.maximum;
+
+        temperatureHistory[batchId].push(
+            TemperatureReading({
+
+                temperature: temperature,
+
+                timestamp: block.timestamp,
+
+                withinRange: withinRange
+            })
+        );
+
+        emit TemperatureRecorded(
+            batchId,
+            temperature,
+            block.timestamp,
+            withinRange
+        );
+    }
+
+    // =========================================================
+    // GET TEMPERATURE RANGE
+    // =========================================================
+
+    function getTemperatureRange(
+        uint256 batchId
+    )
+        external
+        view
+        returns (
+            int256 minimum,
+            int256 maximum,
+            bool configured
+        )
+    {
+
+        TemperatureRange memory range =
+            temperatureRanges[batchId];
+
+        return (
+
+            range.minimum,
+
+            range.maximum,
+
+            range.configured
+        );
+    }
+
+    // =========================================================
+    // GET TEMPERATURE HISTORY
+    // =========================================================
+
+    function getTemperatureHistory(
+        uint256 batchId
+    )
+        external
+        view
+        returns (
+            TemperatureReading[] memory
+        )
+    {
+
+        return temperatureHistory[batchId];
+    }
+
+    // =========================================================
     // TRANSFER OWNERSHIP
     // =========================================================
 
@@ -314,12 +502,13 @@ contract SupplyChain {
     // =========================================================
 
     function updateBatchStatus(
-    uint256 batchId,
-    BatchStatus newStatus
+        uint256 batchId,
+        BatchStatus newStatus
     )
-    external
-    onlyCurrentOwner(batchId)
+        external
+        onlyCurrentOwner(batchId)
     {
+
         require(
             batches[batchId].exists,
             "Batch does not exist"
